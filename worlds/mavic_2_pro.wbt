@@ -1,0 +1,88 @@
+#VRML_SIM R2023b utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/appearances/protos/SandyGround.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/factory/manhole/protos/SquareManhole.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/factory/containers/protos/CardboardBox.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/robots/dji/mavic/protos/Mavic2Pro.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/chairs/protos/WoodenChair.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/tables/protos/Table.proto"
+
+WorldInfo {
+  info [
+    "This demonstration shows a DJI Mavic 2 PRO flying over a rural area."
+    "After the drone has taken off, you can control it with the keyboard of your computer."
+  ]
+  title "DJI Mavic 2 PRO demo"
+  basicTimeStep 8
+  defaultDamping Damping {
+    linear 0.5
+    angular 0.5
+  }
+}
+Viewpoint {
+  orientation 0.1948125655927559 -0.2054616506845933 -0.9590795453898129 4.723814462557245
+  position -1.5897255011084699 -6.415696781000132 3.9153008161075133
+  near 0.2
+  follow "Mavic 2 PRO"
+  followSmoothness 0.2
+}
+TexturedBackground {
+  luminosity 3
+}
+TexturedBackgroundLight {
+  luminosity 2
+}
+Floor {
+  rotation -0.7071067811865475 0 0.7071067811865475 0
+  size 400 400
+  tileSize 6 6
+  appearance SandyGround {
+    colorOverride 0 0 0
+    textureTransform TextureTransform {
+      scale 0 0
+    }
+    IBLStrength 5
+  }
+}
+Table {
+  translation 0.43 -2.46 0
+}
+WoodenChair {
+  translation 0 -2.76 0.12
+  name "wooden chair(1)"
+}
+WoodenChair {
+  translation 0 -2.14 0.12
+}
+SquareManhole {
+  translation 0.35 0 -0.03
+}
+CardboardBox {
+  translation -2.14414 -0.208131 0.3
+  rotation 0 0 1 -1.8325953071795862
+}
+Mavic2Pro {
+  hidden position_0_0 1.1573399070035622e-08
+  hidden linearVelocity_0 -1.633006107118735e-09 -2.2118167974415172e-08 -9.16719805043642e-14
+  hidden angularVelocity_0 -3.108372689699019e-12 -1.25235147744648e-13 -1.6163230705620697e-12
+  hidden position_5_0 1.89550348175481e-09
+  hidden linearVelocity_5 -1.6293241817376996e-09 -2.2070848551352947e-08 2.822541848532789e-12
+  hidden angularVelocity_5 -8.30852662958861e-11 -1.0834527975540826e-09 1.5550133632289065e-08
+  hidden position_6_0 1.1848022552906058e-09
+  hidden linearVelocity_6 -1.6029571639874235e-09 -2.210712825110824e-08 7.751057332436957e-11
+  hidden angularVelocity_6 -3.096408595391692e-08 1.1968968712397336e-09 1.5550166234063917e-08
+  hidden linearVelocity_7 -1.6572793800411541e-09 -2.2499208023548732e-08 2.2600636367407217e-11
+  hidden angularVelocity_7 -3.009854256900273e-08 1.2918254495021205e-08 1.637112426456318e-08
+  translation -0.4288137520616177 1.0464776382839707 0.06570978979917123
+  rotation 0.03483697537478489 -0.0375030979179478 0.9986890921569602 1.4983950644710324
+  cameraSlot [
+    Camera {
+      width 400
+      height 240
+      near 0.2
+    }
+  ]
+}
