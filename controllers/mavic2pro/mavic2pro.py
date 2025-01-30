@@ -53,6 +53,11 @@ class DroneController:
         self.last_space_press_time = 0  # SPACE tuşu için zaman takibi ekle
         self.space_debounce_time = 1.0  # 1 saniye bekleme süresi
 
+        # WebSocket klavye kontrolü için yeni değişkenler
+        self.websocket_roll = 0.0
+        self.websocket_pitch = 0.0
+        self.websocket_yaw = 0.0
+
     def init_devices(self):
         try:
             # Camera
@@ -223,6 +228,50 @@ class DroneController:
             
         return roll_disturbance, pitch_disturbance, yaw_disturbance
 
+    def process_websocket_key(self, key):
+        """WebSocket üzerinden gelen klavye girişlerini işle"""
+        roll_disturbance = 0.0
+        pitch_disturbance = 0.0
+        yaw_disturbance = 0.0
+        
+        current_time = self.robot.getTime()
+        
+        if key == 'Space':  # SPACE tuşu
+            if current_time - self.last_space_press_time > self.space_debounce_time:
+                if not self.is_flying:
+                    self.is_flying = True
+                    self.k_vertical_thrust = self.hover_thrust
+                    self.k_vertical_offset = 0.6
+                    self.target_altitude = 0.8
+                    print("Kalkış yapılıyor...")
+                else:
+                    self.is_flying = False
+                    self.k_vertical_thrust = 0.0
+                    self.target_altitude = 0.0
+                    print("İniş yapılıyor...")
+                self.last_space_press_time = current_time
+        elif self.is_flying:  # Sadece uçarken diğer kontrolleri işle
+            if key == 'ArrowUp':
+                pitch_disturbance = -2.5
+            elif key == 'ArrowDown':
+                pitch_disturbance = 2.5
+            elif key == 'ArrowRight':
+                yaw_disturbance = -1.5
+            elif key == 'ArrowLeft':
+                yaw_disturbance = 1.5
+            elif key == 'ShiftRight':
+                roll_disturbance = -1.5
+            elif key == 'ShiftLeft':
+                roll_disturbance = 1.5
+            elif key == 'KeyW':
+                self.target_altitude += 0.02
+                print(f"Hedef yükseklik: {self.target_altitude:.2f} [m]")
+            elif key == 'KeyS':
+                self.target_altitude -= 0.02
+                print(f"Hedef yükseklik: {self.target_altitude:.2f} [m]")
+        
+        return roll_disturbance, pitch_disturbance, yaw_disturbance
+
     def run_step(self):
         if self.robot.step(self.timestep) == -1:
             return False
@@ -233,10 +282,10 @@ class DroneController:
         # Mevcut komut işleme
         command_roll, command_pitch, command_yaw = self.process_command()
         
-        # Klavye ve komut girişlerini birleştir
-        roll_disturbance = keyboard_roll + command_roll
-        pitch_disturbance = keyboard_pitch + command_pitch
-        yaw_disturbance = keyboard_yaw + command_yaw
+        # Klavye, komut ve websocket girişlerini birleştir
+        roll_disturbance = keyboard_roll + command_roll + self.websocket_roll
+        pitch_disturbance = keyboard_pitch + command_pitch + self.websocket_pitch
+        yaw_disturbance = keyboard_yaw + command_yaw + self.websocket_yaw
         
         # Get sensor data
         roll = self.imu.getRollPitchYaw()[0]
@@ -558,7 +607,25 @@ async def handle_websocket(websocket):
             try:
                 print(f'Alınan mesaj: {message}')  # Debug log
                 data = json.loads(message)
-                if 'code' in data:
+                
+                # Klavye kontrolü için yeni kontrol bloğu
+                if 'type' in data and data['type'] == 'keyboard':
+                    key = data.get('key')
+                    # process_websocket_key metodunu çağır
+                    roll, pitch, yaw = drone.process_websocket_key(key)
+                    
+                    # Değerleri doğrudan drone'un websocket değişkenlerine ata
+                    drone.websocket_roll = roll
+                    drone.websocket_pitch = pitch
+                    drone.websocket_yaw = yaw
+                    
+                    # Tuş bırakıldığında değerleri sıfırla
+                    if data.get('event') == 'keyup':
+                        drone.websocket_roll = 0.0
+                        drone.websocket_pitch = 0.0
+                        drone.websocket_yaw = 0.0
+                
+                elif 'code' in data:
                     code = data['code'].replace('\\n', '\n')
                     print(f'İşlenen kod:\n{code}')
                     result = drone.parse_and_execute_code(code)
@@ -568,12 +635,13 @@ async def handle_websocket(websocket):
                         'message': result['message']
                     }))
                 else:
-                    print(f'Geçersiz mesaj formatı: {data}')  # Debug log
+                    print(f'Geçersiz mesaj formatı: {data}')
                     await websocket.send(json.dumps({
                         'type': 'error',
                         'status': 'error',
                         'message': 'Geçersiz mesaj formatı'
                     }))
+                    
             except json.JSONDecodeError as e:
                 print(f'Geçersiz JSON: {message}')  # Debug log
                 await websocket.send(json.dumps({
