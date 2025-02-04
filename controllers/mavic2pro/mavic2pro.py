@@ -58,6 +58,20 @@ class DroneController:
         self.websocket_pitch = 0.0
         self.websocket_yaw = 0.0
 
+        # Hız takibi için yeni değişkenler
+        self.last_position = None
+        self.last_time = None
+        self.current_velocity = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+        self.current_speed = 0.0  # Toplam hız büyüklüğü
+        
+        # Motor hızları için değişkenler
+        self.current_motor_speeds = {
+            'front_left': 0.0,
+            'front_right': 0.0,
+            'rear_left': 0.0,
+            'rear_right': 0.0
+        }
+
     def init_devices(self):
         try:
             # Camera
@@ -175,10 +189,10 @@ class DroneController:
                 yaw_disturbance = 0.78  # Hız çarpanı etkisiz
             elif command == "up":
                 if self.target_altitude < 4.0:
-                    self.target_altitude += 0.01  # Hız çarpanı etkisiz
+                    self.target_altitude += 0.0005  # Hız çarpanı etkisiz
             elif command == "down":
                 if self.target_altitude > 0.2:
-                    self.target_altitude -= 0.01  # Hız çarpanı etkisiz
+                    self.target_altitude -= 0.0009  # Hız çarpanı etkisiz
             
         return roll_disturbance, pitch_disturbance, yaw_disturbance
 
@@ -272,6 +286,31 @@ class DroneController:
         
         return roll_disturbance, pitch_disturbance, yaw_disturbance
 
+    def update_velocity(self):
+        """GPS verilerinden hız hesaplama"""
+        current_pos = self.gps.getValues()
+        current_time = self.robot.getTime()
+        
+        if self.last_position is not None and self.last_time is not None:
+            dt = current_time - self.last_time
+            if dt > 0:
+                # Her eksendeki hız bileşenlerini hesapla (m/s)
+                self.current_velocity = {
+                    'x': (current_pos[0] - self.last_position[0]) / dt,
+                    'y': (current_pos[1] - self.last_position[1]) / dt,
+                    'z': (current_pos[2] - self.last_position[2]) / dt
+                }
+                
+                # Toplam hız büyüklüğünü hesapla
+                self.current_speed = math.sqrt(
+                    self.current_velocity['x']**2 + 
+                    self.current_velocity['y']**2 + 
+                    self.current_velocity['z']**2
+                )
+        
+        self.last_position = current_pos
+        self.last_time = current_time
+
     def run_step(self):
         if self.robot.step(self.timestep) == -1:
             return False
@@ -328,6 +367,17 @@ class DroneController:
         self.motors['front_right'].setVelocity(-front_right_motor_input)
         self.motors['rear_left'].setVelocity(-rear_left_motor_input)
         self.motors['rear_right'].setVelocity(rear_right_motor_input)
+        
+        # Motor hızlarını kaydet
+        self.current_motor_speeds = {
+            'front_left': front_left_motor_input,
+            'front_right': front_right_motor_input,
+            'rear_left': rear_left_motor_input,
+            'rear_right': rear_right_motor_input
+        }
+        
+        # Hız hesaplamalarını güncelle
+        self.update_velocity()
         
         return True
 
@@ -397,12 +447,21 @@ class DroneController:
                     """
                     print(f'MockDrone fly: direction={direction}, distance={distance_cm}cm, speed={self.speed}')
                     direction = direction.lower().strip()
-                    # Santimetreden adım sayısına çevirme
-                    steps = max(1, int(distance_cm * self.CM_TO_STEPS))
                     
-                    # Sabit süre kullan ama motor hızını ayarla
-                    duration = 3000  # Sabit 3 saniye
-                    speed_multiplier = {1: 1.0, 2: 1.5, 3: 2.0}  # Motor hız çarpanları
+                    # Hız seviyelerine göre temel hız ve süre çarpanları
+                    speed_settings = {
+                        1: {'multiplier': 0.5, 'time_factor': 2.0},   # Yavaş
+                        2: {'multiplier': 1.0, 'time_factor': 1.0},   # Normal
+                        3: {'multiplier': 1.5, 'time_factor': 0.7},   # Hızlı
+                        4: {'multiplier': 2.0, 'time_factor': 0.5}    # Çok hızlı
+                    }
+                    
+                    # Temel süre hesaplama (her 10cm için 1000ms)
+                    base_duration = (distance_cm / 10) * 1000
+                    
+                    # Hız ayarına göre süreyi ayarla
+                    duration = max(500, int(base_duration * speed_settings[self.speed]['time_factor']))
+                    speed_multiplier = speed_settings[self.speed]['multiplier']
                     
                     direction_mapping = {
                         'ileri': 'forward',
@@ -415,20 +474,14 @@ class DroneController:
                     
                     cmd = direction_mapping.get(direction)
                     if cmd:
-                        print(f'Converting {distance_cm}cm to {steps} steps for {cmd} with motor speed multiplier {speed_multiplier[self.speed]}')
-                        # Hız çarpanını komutla birlikte gönder
-                        self.controller.set_command(cmd, steps, duration, speed_multiplier=speed_multiplier[self.speed])
-                        self.controller.set_command('wait', 1, 3500)  # Sabit bekleme süresi
+                        print(f'Moving {distance_cm}cm with duration {duration}ms at speed multiplier {speed_multiplier}')
+                        # Tek bir hareket olarak gönder
+                        self.controller.set_command(cmd, 1, duration, speed_multiplier=speed_multiplier)
+                        # Hareket sonrası stabilizasyon için kısa bekleme
+                        self.controller.set_command('wait', 1, int(duration * 0.2))
 
                 def turn(self, degrees):
-                    """
-                    Drone'u belirtilen derece kadar döndürür.
-                    Hıza göre motor hızı değişir:
-                    - Hız 1 (yavaş): Motor hızı x0.5
-                    - Hız 2 (normal): Motor hızı x1.0
-                    - Hız 3 (hızlı): Motor hızı x1.5
-                    - Hız 4 (çok hızlı): Motor hızı x2.0
-                    """
+                
                     print(f'MockDrone turn: {degrees} degrees at speed {self.speed}')
                     
                     duration = abs(degrees) * 20  # Her derece için 20ms dönüş süresi
@@ -561,6 +614,20 @@ class DroneController:
                 'is_executing': self.current_command is not None
             }
             
+            # Hız bilgilerini ekle
+            speed_data = {
+                'velocity': {
+                    'x': round(self.current_velocity['x'], 2),
+                    'y': round(self.current_velocity['y'], 2),
+                    'z': round(self.current_velocity['z'], 2)
+                },
+                'speed': round(self.current_speed, 2),  # Toplam hız (m/s)
+                'motor_speeds': {
+                    key: round(abs(value), 2) 
+                    for key, value in self.current_motor_speeds.items()
+                }
+            }
+            
             # Genel durum
             return {
                 'position': position,
@@ -571,6 +638,7 @@ class DroneController:
                 'is_flying': self.is_flying,
                 'target_altitude': round(self.target_altitude, 2),
                 'command_status': command_status,
+                'speed_data': speed_data,  # Yeni hız verileri
                 'timestamp': self.robot.getTime()
             }
         except Exception as e:
