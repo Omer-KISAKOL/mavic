@@ -402,107 +402,36 @@ class DroneController:
             # Güvenli bir şekilde locals() sözlüğü oluştur
             local_vars = {}
             
-            class MockThread:
-                def __init__(self, target=None):
-                    self.target = target
-                
-                def start(self):
-                    if self.target:
-                        self.target()
-                
-                def join(self):
-                    pass
-            
-            class MockThreading:
-                @staticmethod
-                def Thread(target=None):
-                    return MockThread(target)
-            
-            # Sahte drone sınıfı oluştur
+            # MockDrone sınıfını buraya taşı
             class MockDrone:
                 def __init__(self, controller):
                     self.controller = controller
                     self.speed = 2
-                    self.CM_TO_STEPS = 0.02
-                    self.DEGREE_TO_MS = 20
-                    self.CM_TO_HEIGHT = 0.01
-                    # GPS dönüşümleri için yeni sabitler
-                    self.LAT_TO_METER = 111319.9  # 1 derece enlem yaklaşık metre karşılığı
-                    self.LON_TO_METER = 111319.9  # 1 derece boylam yaklaşık metre karşılığı (ekvator için)
                     print('MockDrone initialized')
 
-                def set_speed(self, speed):
-                    """
-                    Drone'un hızını ayarlar.
-                    Hız seviyeleri:
-                    1: Yavaş hız
-                    2: Normal hız (varsayılan)
-                    3: Hızlı
-                    4: Çok hızlı
-                    """
-                    speed = int(speed)  # Ondalıklı sayıları tam sayıya çevir
-                    if speed < 1:
-                        speed = 1
-                    elif speed > 4:
-                        speed = 4
-                    print(f'MockDrone set_speed: {speed}')
-                    self.speed = speed
-
                 def takeoff(self, height_cm=None):
-                    """
-                    Drone'u belirtilen yüksekliğe kaldırır.
-                    height_cm: Santimetre cinsinden hedef yükseklik (opsiyonel)
-                    Varsayılan yükseklik 80cm (0.8m)
-                    """
                     print(f'MockDrone takeoff to {height_cm}cm' if height_cm else 'MockDrone takeoff')
-                    
-                    # Yüksekliği metre cinsine çevir (varsayılan 0.8m)
                     target_height = 0.8
                     if height_cm is not None:
-                        # Santimetreden metreye çevir ve minimum/maximum sınırları uygula
-                        target_height = max(0.2, min(4.0, height_cm * self.CM_TO_HEIGHT))
-                    
-                    # Kalkış komutunu gönder
+                        target_height = max(0.2, min(4.0, height_cm / 100.0))
                     self.controller.set_command('takeoff', 1, 3000, target_height=target_height)
-                    self.controller.set_command('wait', 1, 3000)  # Kalkış sonrası 3 saniye bekleme
-                
+                    self.controller.set_command('wait', 1, 3000)
+
                 def land(self):
                     print('MockDrone land')
                     self.controller.set_command('land', 1)
-                    self.controller.set_command('wait', 1)
-                
+                    self.controller.set_command('wait', 1, 3000)
+
                 def fly(self, direction, distance_cm):
-                    """
-                    distance_cm: Santimetre cinsinden mesafe
-                    Yön seçenekleri:
-                    - ileri: İleri hareket
-                    - geri: Geri hareket
-                    - sol: Sola kayma (strafe left)
-                    - sag: Sağa kayma (strafe right)
-                    - yukari: Yukarı hareket
-                    - asagi: Aşağı hareket
-                    """
-                    print(f'MockDrone fly: direction={direction}, distance={distance_cm}cm, speed={self.speed}')
+                    print(f'MockDrone fly: direction={direction}, distance={distance_cm}cm')
                     direction = direction.lower().strip()
                     
-                    # Hız seviyelerine göre temel hız ve süre çarpanları
-                    speed_settings = {
-                        1: {'multiplier': 0.5, 'time_factor': 2.0},   # Yavaş
-                        2: {'multiplier': 1.0, 'time_factor': 1.0},   # Normal
-                        3: {'multiplier': 1.5, 'time_factor': 0.7},   # Hızlı
-                        4: {'multiplier': 2.0, 'time_factor': 0.5}    # Çok hızlı
-                    }
-                    
-                    # Temel süre hesaplama (her 10cm için 1000ms)
-                    base_duration = (distance_cm / 10) * 1000
-                    
-                    # Hız ayarına göre süreyi ayarla
-                    duration = max(500, int(base_duration * speed_settings[self.speed]['time_factor']))
-                    speed_multiplier = speed_settings[self.speed]['multiplier']
+                    # Her 10cm için 1000ms temel süre
+                    duration = max(500, int((distance_cm / 10) * 1000))
                     
                     direction_mapping = {
                         'ileri': 'forward',
-                        'geri': 'backward', 
+                        'geri': 'backward',
                         'sol': 'strafe_left',
                         'sag': 'strafe_right',
                         'yukari': 'up',
@@ -511,150 +440,55 @@ class DroneController:
                     
                     cmd = direction_mapping.get(direction)
                     if cmd:
-                        print(f'Moving {distance_cm}cm with duration {duration}ms at speed multiplier {speed_multiplier}')
-                        # Tek bir hareket olarak gönder
-                        self.controller.set_command(cmd, 1, duration, speed_multiplier=speed_multiplier)
-                        # Hareket sonrası stabilizasyon için kısa bekleme
+                        self.controller.set_command(cmd, 1, duration)
                         self.controller.set_command('wait', 1, int(duration * 0.2))
 
                 def turn(self, degrees):
-                
-                    print(f'MockDrone turn: {degrees} degrees at speed {self.speed}')
+                    print(f'MockDrone turn: {degrees} degrees')
+                    duration = abs(degrees) * 20
                     
-                    duration = abs(degrees) * 20  # Her derece için 20ms dönüş süresi
-                    speed_multiplier = {1: 0.5, 2: 1.0, 3: 1.5, 4: 2.0}  # Motor hız çarpanları
-                    
-                    repeats = 1
                     if degrees > 0:
-                        print(f'Turning right {degrees} degrees with motor speed multiplier {speed_multiplier[self.speed]}')
-                        self.controller.set_command('right', repeats, duration=duration, speed_multiplier=speed_multiplier[self.speed])
+                        self.controller.set_command('right', 1, duration=duration)
                     else:
-                        print(f'Turning left {abs(degrees)} degrees with motor speed multiplier {speed_multiplier[self.speed]}')
-                        self.controller.set_command('left', repeats, duration=duration, speed_multiplier=speed_multiplier[self.speed])
+                        self.controller.set_command('left', 1, duration=duration)
                     
-                    self.controller.set_command('wait', 1, 3000)  # Sabit bekleme süresi
+                    self.controller.set_command('wait', 1, 3000)
 
-                def fly_to(self, x_cm, y_cm, z_cm):
-                    """
-                    x_cm, y_cm, z_cm: Santimetre cinsinden koordinatlar
-                    """
-                    print(f'MockDrone fly_to: x={x_cm}cm, y={y_cm}cm, z={z_cm}cm')
-                    # Santimetreden adım sayısına çevirme
-                    x_steps = max(1, int(abs(x_cm) * self.CM_TO_STEPS))
-                    z_steps = max(1, int(abs(z_cm) * self.CM_TO_STEPS))
-                    
-                    self.controller.set_command('forward', x_steps)
-                    if z_cm > 0:
-                        self.controller.set_command('up', z_steps)
-                    else:
-                        self.controller.set_command('down', z_steps)
-                    self.controller.set_command('wait', 1)
-
-                def return_to_start(self):
-                    print('MockDrone return_to_start')
-                    self.controller.set_command('land', 1)
-                    self.controller.set_command('wait', 1)
-                    self.controller.set_command('takeoff', 1)
-
-                def stream_on(self):
-                    print('MockDrone stream_on')
-                    # Kamera stream simülasyonu
-
-                def stream_off(self):
-                    print('MockDrone stream_off')
-                    # Kamera stream kapatma simülasyonu
-
-                def emergency_stop(self):
-                    print('MockDrone emergency_stop')
-                    self.controller.set_command('land', 1)
-
-                def stop(self):
-                    print('MockDrone stop')
-                    self.controller.set_command('wait', 1)
-
-                # Sensör fonksiyonları
-                def get_temperature(self):
-                    return 25.0  # Simüle edilmiş sıcaklık değeri (Celsius)
-
-                def get_humidity(self):
-                    return 45.0  # Simüle edilmiş nem değeri (%)
-
-                def get_pressure(self):
-                    return 1013.25  # Simüle edilmiş basınç değeri (hPa)
-
-                def get_height(self):
-                    return 150.0  # Simüle edilmiş yükseklik değeri (cm)
-
-                def get_acceleration(self, axis):
-                    return 0.0  # Simüle edilmiş ivme değeri (m/s²)
-
-                def fly_to_gps(self, lat, lon, alt):
-                    """
-                    Verilen GPS koordinatlarına uçar
-                    lat: Hedef enlem (latitude)
-                    lon: Hedef boylam (longitude)
-                    alt: Hedef yükseklik (metre)
-                    """
-                    print(f'MockDrone fly_to_gps: lat={lat}, lon={lon}, alt={alt}')
-                    
-                    try:
-                        # Mevcut GPS konumunu al
-                        current_gps = self.controller.gps.getValues()
-                        current_lat = current_gps[0] / self.LAT_TO_METER
-                        current_lon = current_gps[1] / self.LON_TO_METER
-                        current_alt = current_gps[2]
-                        
-                        # Mesafe hesaplamaları (metre cinsinden)
-                        lat_diff = (float(lat) - current_lat) * self.LAT_TO_METER
-                        lon_diff = (float(lon) - current_lon) * self.LON_TO_METER
-                        alt_diff = float(alt) - current_alt
-                        
-                        # Mesafeleri santimetreye çevir
-                        x_cm = lat_diff * 100
-                        y_cm = lon_diff * 100
-                        z_cm = alt_diff * 100
-                        
-                        print(f'Hesaplanan hareket mesafeleri: x={x_cm}cm, y={y_cm}cm, z={z_cm}cm')
-                        
-                        # Önce yüksekliğe çık
-                        if abs(z_cm) > 10:  # 10cm'den fazla yükseklik farkı varsa
-                            if z_cm > 0:
-                                self.fly('yukari', abs(z_cm))
-                            else:
-                                self.fly('asagi', abs(z_cm))
-                        
-                        # Sonra yatay hareket
-                        if abs(x_cm) > 10:  # 10cm'den fazla x ekseni farkı varsa
-                            if x_cm > 0:
-                                self.fly('ileri', abs(x_cm))
-                            else:
-                                self.fly('geri', abs(x_cm))
-                        
-                        if abs(y_cm) > 10:  # 10cm'den fazla y ekseni farkı varsa
-                            if y_cm > 0:
-                                self.fly('sag', abs(y_cm))
-                            else:
-                                self.fly('sol', abs(y_cm))
-                        
-                        # Stabilizasyon için bekle
-                        self.controller.set_command('wait', 1, 3000)
-                        
-                    except Exception as e:
-                        print(f'GPS konumuna uçuş sırasında hata: {str(e)}')
-                        self.emergency_stop()
+            # Thread fonksiyonlarını ayıkla ve sırayla çalıştır
+            modified_code = ""
+            if 'def thread_' in code_text:
+                # Thread fonksiyonlarının içeriğini ayıkla
+                thread_contents = []
+                current_thread = []
+                for line in code_text.split('\n'):
+                    if line.strip().startswith('def thread_'):
+                        if current_thread:
+                            thread_contents.append('\n'.join(current_thread))
+                            current_thread = []
+                        continue
+                    elif line.strip().startswith(('threads =', 't0 =', 't1 =', 'for t in', '#')):
+                        continue
+                    elif line.strip() and not line.strip().startswith('import'):
+                        current_thread.append(line.strip())
+                
+                if current_thread:
+                    thread_contents.append('\n'.join(current_thread))
+                
+                # Thread içeriklerini birleştir
+                modified_code = '\n'.join(thread_contents)
+            else:
+                modified_code = code_text
 
             # Globals sözlüğünü güvenli şekilde oluştur
             safe_globals = {
                 'print': print,
                 'drone': MockDrone(self),
-                'threading': MockThreading(),
-                'Thread': MockThreading.Thread,
-                'math': __import__('math')  # math modülünü ekle
+                'math': __import__('math')
             }
             
             # Kodu çalıştır
-            print('Executing code...')
-            exec(code_text, safe_globals, local_vars)
+            print('Executing modified code:\n', modified_code)
+            exec(modified_code, safe_globals, local_vars)
             print('Code execution completed')
             
             return {'status': 'success', 'message': 'Kod başarıyla işlendi'}
