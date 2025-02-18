@@ -561,21 +561,15 @@ class DroneController:
 
 async def handle_websocket(websocket):
     global drone
+    print('New client connected')
     try:
-        print('New client connected')
-        
-        # Bağlantı durumunu kontrol et
-        if not websocket.open:
-            print('WebSocket connection is not open')
-            return
-
         async def send_state_updates():
-            while websocket.open:  # Bağlantı durumunu kontrol et
+            while True:
                 try:
                     state = drone.get_drone_state()
                     if state:
-                        if (state['command_status']['command_queue_length'] == 0 and 
-                            not state['command_status']['current_command']):
+                        # Komut kuyruğu boşsa ve aktif komut yoksa, işlemin bittiğini bildir
+                        if state['command_status']['command_queue_length'] == 0 and not state['command_status']['current_command']:
                             await websocket.send(json.dumps({
                                 'type': 'execution_complete',
                                 'message': 'Tüm komutlar başarıyla tamamlandı'
@@ -585,76 +579,71 @@ async def handle_websocket(websocket):
                             'data': state
                         }))
                     await asyncio.sleep(0.3)
-                except websockets.exceptions.ConnectionClosed:
-                    print('Connection closed during state updates')
-                    break
                 except Exception as e:
                     print(f'Durum güncellemesi gönderilirken hata: {e}')
                     break
 
         state_task = asyncio.create_task(send_state_updates())
         
-        try:
-            async for message in websocket:
-                try:
-                    print(f'Alınan mesaj: {message}')
-                    data = json.loads(message)
+        async for message in websocket:
+            try:
+                print(f'Alınan mesaj: {message}')  # Debug log
+                data = json.loads(message)
+                
+                # Klavye kontrolü için yeni kontrol bloğu
+                if 'type' in data and data['type'] == 'keyboard':
+                    key = data.get('key')
+                    # process_websocket_key metodunu çağır
+                    roll, pitch, yaw = drone.process_websocket_key(key)
                     
-                    if 'type' in data and data['type'] == 'keyboard':
-                        key = data.get('key')
-                        roll, pitch, yaw = drone.process_websocket_key(key)
-                        drone.websocket_roll = roll
-                        drone.websocket_pitch = pitch
-                        drone.websocket_yaw = yaw
-                        
-                        if data.get('event') == 'keyup':
-                            drone.websocket_roll = 0.0
-                            drone.websocket_pitch = 0.0
-                            drone.websocket_yaw = 0.0
+                    # Değerleri doğrudan drone'un websocket değişkenlerine ata
+                    drone.websocket_roll = roll
+                    drone.websocket_pitch = pitch
+                    drone.websocket_yaw = yaw
                     
-                    elif 'code' in data:
-                        code = data['code'].replace('\\n', '\n')
-                        print(f'İşlenen kod:\n{code}')
-                        result = drone.parse_and_execute_code(code)
-                        if websocket.open:  # Bağlantı durumunu kontrol et
-                            await websocket.send(json.dumps({
-                                'type': 'code_response',
-                                'status': result['status'],
-                                'message': result['message']
-                            }))
-                    else:
-                        if websocket.open:  # Bağlantı durumunu kontrol et
-                            await websocket.send(json.dumps({
-                                'type': 'error',
-                                'status': 'error',
-                                'message': 'Geçersiz mesaj formatı'
-                            }))
-                        
-                except json.JSONDecodeError as e:
-                    if websocket.open:  # Bağlantı durumunu kontrol et
-                        await websocket.send(json.dumps({
-                            'type': 'error',
-                            'status': 'error', 
-                            'message': 'Geçersiz JSON formatı'
-                        }))
-                except Exception as e:
-                    print(f'Mesaj işlenirken hata: {str(e)}')
-                    if websocket.open:  # Bağlantı durumunu kontrol et
-                        await websocket.send(json.dumps({
-                            'type': 'error',
-                            'status': 'error', 
-                            'message': str(e)
-                        }))
+                    # Tuş bırakıldığında değerleri sıfırla
+                    if data.get('event') == 'keyup':
+                        drone.websocket_roll = 0.0
+                        drone.websocket_pitch = 0.0
+                        drone.websocket_yaw = 0.0
+                
+                elif 'code' in data:
+                    code = data['code'].replace('\\n', '\n')
+                    print(f'İşlenen kod:\n{code}')
+                    result = drone.parse_and_execute_code(code)
+                    await websocket.send(json.dumps({
+                        'type': 'code_response',
+                        'status': result['status'],
+                        'message': result['message']
+                    }))
+                else:
+                    print(f'Geçersiz mesaj formatı: {data}')
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'status': 'error',
+                        'message': 'Geçersiz mesaj formatı'
+                    }))
                     
-        except websockets.exceptions.ConnectionClosed:
-            print('WebSocket connection closed during message processing')
-            
-    except Exception as e:
-        print(f'Error in handle_websocket: {str(e)}')
+            except json.JSONDecodeError as e:
+                print(f'Geçersiz JSON: {message}')  # Debug log
+                await websocket.send(json.dumps({
+                    'type': 'error',
+                    'status': 'error', 
+                    'message': 'Geçersiz JSON formatı'
+                }))
+            except Exception as e:
+                print(f'Mesaj işlenirken hata: {str(e)}')
+                await websocket.send(json.dumps({
+                    'type': 'error',
+                    'status': 'error', 
+                    'message': str(e)
+                }))
+                
+    except websockets.exceptions.ConnectionClosed:
+        print('Client disconnected')
     finally:
         if 'state_task' in locals():
             state_task.cancel()
-        print('Client disconnected')
 
 def run_drone(drone):
     """Drone simülasyonunu çalıştıran fonksiyon"""
@@ -666,26 +655,24 @@ def run_drone(drone):
 async def main():
     try:
         global drone
+        # Create the drone controller
         drone = DroneController()
         
+        # Create and start the drone thread
         drone_thread = threading.Thread(target=run_drone, args=(drone,))
         drone_thread.daemon = True
         drone_thread.start()
 
-        # WebSocket sunucusu yapılandırması
+        # WebSocket sunucusunu başlat (basitleştirilmiş versiyon)
         server = await websockets.serve(
             handle_websocket,
-            "localhost",  # Sadece yerel bağlantılara izin ver
+            "0.0.0.0",  # Tüm ağ arayüzlerinden bağlantı kabul et
             2345,
-            ping_interval=20,  # Ping aralığını ayarla
-            ping_timeout=30,   # Ping zaman aşımını ayarla
-            close_timeout=10   # Kapatma zaman aşımını ayarla
+            ping_interval=None,
+            ping_timeout=None
         )
-        
-        print("WebSocket server running on ws://localhost:2345")
-        
-        # Sunucuyu süresiz çalıştır
-        await asyncio.Future()  # Sonsuz bekleme
+        print("WebSocket server running on ws://0.0.0.0:2345")
+        await server.wait_closed()
             
     except Exception as e:
         print(f"Error in main: {str(e)}")
