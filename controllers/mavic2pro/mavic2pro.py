@@ -454,6 +454,65 @@ class DroneController:
                     
                     self.controller.set_command('wait', 1, 3000)
 
+                # Yeni hareket komutları
+                def move_up(self, distance_cm):
+                    print(f'MockDrone move_up: {distance_cm}cm')
+                    duration = max(500, int((distance_cm / 10) * 1000))
+                    self.controller.set_command('up', 1, duration)
+                    self.controller.set_command('wait', 1, int(duration * 0.2))
+
+                def move_down(self, distance_cm):
+                    print(f'MockDrone move_down: {distance_cm}cm')
+                    duration = max(500, int((distance_cm / 10) * 1000))
+                    self.controller.set_command('down', 1, duration)
+                    self.controller.set_command('wait', 1, int(duration * 0.2))
+
+                def move_forward(self, distance_cm):
+                    print(f'MockDrone move_forward: {distance_cm}cm')
+                    duration = max(500, int((distance_cm / 10) * 1000))
+                    self.controller.set_command('forward', 1, duration)
+                    self.controller.set_command('wait', 1, int(duration * 0.2))
+
+                def move_backward(self, distance_cm):
+                    print(f'MockDrone move_backward: {distance_cm}cm')
+                    duration = max(500, int((distance_cm / 10) * 1000))
+                    self.controller.set_command('backward', 1, duration)
+                    self.controller.set_command('wait', 1, int(duration * 0.2))
+
+                def move_left(self, distance_cm):
+                    print(f'MockDrone move_left: {distance_cm}cm')
+                    duration = max(500, int((distance_cm / 10) * 1000))
+                    self.controller.set_command('strafe_left', 1, duration)
+                    self.controller.set_command('wait', 1, int(duration * 0.2))
+
+                def move_right(self, distance_cm):
+                    print(f'MockDrone move_right: {distance_cm}cm')
+                    duration = max(500, int((distance_cm / 10) * 1000))
+                    self.controller.set_command('strafe_right', 1, duration)
+                    self.controller.set_command('wait', 1, int(duration * 0.2))
+
+                def turn_left(self, degrees):
+                    print(f'MockDrone turn_left: {degrees} degrees')
+                    duration = abs(degrees) * 20
+                    self.controller.set_command('left', 1, duration=duration)
+                    self.controller.set_command('wait', 1, 1000)
+
+                def turn_right(self, degrees):
+                    print(f'MockDrone turn_right: {degrees} degrees')
+                    duration = abs(degrees) * 20
+                    self.controller.set_command('right', 1, duration=duration)
+                    self.controller.set_command('wait', 1, 1000)
+
+            # Mock time modülü oluştur
+            class MockTime:
+                def __init__(self, controller):
+                    self.controller = controller
+                
+                def sleep(self, seconds):
+                    print(f'MockTime sleep: {seconds} seconds')
+                    duration_ms = int(seconds * 1000)
+                    self.controller.set_command('wait', 1, duration_ms)
+
             # Thread fonksiyonlarını ayıkla ve sırayla çalıştır
             modified_code = ""
             if 'def thread_' in code_text:
@@ -483,7 +542,8 @@ class DroneController:
             safe_globals = {
                 'print': print,
                 'drone': MockDrone(self),
-                'math': __import__('math')
+                'math': __import__('math'),
+                'time': MockTime(self)
             }
             
             # Kodu çalıştır
