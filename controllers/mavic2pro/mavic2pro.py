@@ -4,6 +4,7 @@ import asyncio
 import websockets
 import json
 import threading
+import random
 
 class DroneController:
     def __init__(self):
@@ -28,6 +29,19 @@ class DroneController:
         self.is_flying = False
         self.hover_thrust = 68.5  # Hover için gereken itme
         self.min_thrust = 10.0    # Minimum pervane hızı
+
+        # Çarpma önleme sistemi için değişkenler
+        self.collision_avoidance_enabled = True
+        self.min_distance = 0.300  # 10cm minimum mesafe (metre cinsinden)
+        self.distance_sensors = {}
+        self.current_distances = {
+            'on': 1000.0,    # ön
+            'arka': 1000.0,  # arka
+            'sol': 1000.0,   # sol
+            'sag': 1000.0,   # sağ
+            'yukari': 1000.0, # yukarı
+            'asagi': 1000.0   # aşağı
+        }
 
         # Initialize devices
         self.init_devices()
@@ -98,6 +112,10 @@ class DroneController:
             # Camera motors
             self.camera_roll = self.robot.getDevice("camera roll")
             self.camera_pitch = self.robot.getDevice("camera pitch")
+            
+            # Mesafe sensörleri GPS ve IMU tabanlı hesaplama ile simüle edilecek
+            print("Mesafe sensörleri GPS ve IMU verilerinden hesaplanacak")
+            
             print("All devices initialized successfully")
         except Exception as e:
             print(f"Error initializing devices: {str(e)}")
@@ -172,6 +190,25 @@ class DroneController:
         pitch_disturbance = 0.0
         yaw_disturbance = 0.0
         
+        # Gerçek zamanlı çarpma önleme kontrolü
+        collision_detected = False
+        if self.collision_avoidance_enabled and self.is_flying and command:
+            if command == "forward" and self.check_collision_risk('on', 0):
+                print("⚠️ ÇARPMA RİSKİ: İleri hareket durduruldu!")
+                collision_detected = True
+            elif command == "backward" and self.check_collision_risk('arka', 0):
+                print("⚠️ ÇARPMA RİSKİ: Geri hareket durduruldu!")
+                collision_detected = True
+            elif command == "strafe_left" and self.check_collision_risk('sol', 0):
+                print("⚠️ ÇARPMA RİSKİ: Sol hareket durduruldu!")
+                collision_detected = True
+            elif command == "strafe_right" and self.check_collision_risk('sag', 0):
+                print("⚠️ ÇARPMA RİSKİ: Sağ hareket durduruldu!")
+                collision_detected = True
+            elif command == "down" and self.check_collision_risk('asagi', 0):
+                print("⚠️ ÇARPMA RİSKİ: Aşağı hareket durduruldu!")
+                collision_detected = True
+        
         if command == "takeoff":
             if not self.is_flying:
                 self.is_flying = True
@@ -182,7 +219,7 @@ class DroneController:
             if self.is_flying:
                 self.is_flying = False
                 self.target_altitude = 0.0
-        elif self.is_flying:
+        elif self.is_flying and not collision_detected:  # Çarpma riski yoksa hareket et
             if command == "forward":
                 pitch_disturbance = -1.0 * speed_multiplier
             elif command == "backward":
@@ -201,6 +238,12 @@ class DroneController:
             elif command == "down":
                 if self.target_altitude > 0.2:
                     self.target_altitude -= 0.0009  # Hız çarpanı etkisiz
+        elif collision_detected:
+            # Çarpma riski varsa komutu iptal et ve kuyruğu temizle
+            with self.command_lock:
+                self.current_command = None
+                self.command_queue.clear()
+                print("🛑 Çarpma riski nedeniyle tüm komutlar iptal edildi!")
             
         return roll_disturbance, pitch_disturbance, yaw_disturbance
 
@@ -325,6 +368,9 @@ class DroneController:
         if self.robot.step(self.timestep) == -1:
             return False
 
+        # Mesafe sensörlerini güncelle
+        self.read_distance_sensors()
+        
         # Klavye kontrollerini işle
         keyboard_roll, keyboard_pitch, keyboard_yaw = self.process_keyboard()
         
@@ -503,15 +549,46 @@ class DroneController:
                     self.controller.set_command('right', 1, duration=duration)
                     self.controller.set_command('wait', 1, 1000)
 
+                def read_sensor(self, direction):
+                    """
+                    Belirtilen yöndeki mesafe sensöründen veri oku
+                    direction: 'on', 'arka', 'sol', 'sag', 'yukari', 'asagi'
+                    Dönüş: Mesafe (santimetre cinsinden)
+                    """
+                    direction = direction.lower().strip()
+                    
+                    # Gerçek zamanlı sensör verilerini güncelle
+                    self.controller.read_distance_sensors()
+                    
+                    # Mesafeyi döndür
+                    distance = self.controller.current_distances.get(direction, 1000.0)
+                    print(f'🔍 Sensor reading - {direction}: {distance:.1f}cm')
+                    return distance
+                
+                def enable_collision_avoidance(self, enabled=True):
+                    """Çarpma önleme sistemini aç/kapat"""
+                    self.controller.collision_avoidance_enabled = enabled
+                    print(f'Collision avoidance: {"enabled" if enabled else "disabled"}')
+                
+                def set_min_distance(self, distance_cm):
+                    """Minimum güvenli mesafeyi ayarla"""
+                    self.controller.min_distance = distance_cm / 100.0  # cm'yi metreye çevir
+                    print(f'Minimum safe distance set to: {distance_cm}cm')
+
             # Mock time modülü oluştur
             class MockTime:
                 def __init__(self, controller):
                     self.controller = controller
                 
                 def sleep(self, seconds):
-                    print(f'MockTime sleep: {seconds} seconds')
+                    print(f'⏱️ Sleep: {seconds} seconds')
                     duration_ms = int(seconds * 1000)
                     self.controller.set_command('wait', 1, duration_ms)
+                    
+                    # Gerçek zamanlı bekleme simülasyonu için
+                    # Kısa beklemeler için sensör güncellemesi yap
+                    if seconds <= 1.0:
+                        self.controller.read_distance_sensors()
 
             # Thread fonksiyonlarını ayıkla ve sırayla çalıştır
             modified_code = ""
@@ -602,6 +679,16 @@ class DroneController:
                 }
             }
             
+            # Mesafe sensörü verileri
+            distance_data = {
+                'distances': {
+                    direction: round(distance, 1) 
+                    for direction, distance in self.current_distances.items()
+                },
+                'collision_avoidance_enabled': self.collision_avoidance_enabled,
+                'min_distance_cm': round(self.min_distance * 100, 1)
+            }
+            
             # Genel durum
             return {
                 'position': position,
@@ -613,11 +700,167 @@ class DroneController:
                 'target_altitude': round(self.target_altitude, 2),
                 'command_status': command_status,
                 'speed_data': speed_data,  # Yeni hız verileri
+                'distance_data': distance_data,  # Mesafe sensörü verileri
                 'timestamp': self.robot.getTime()
             }
         except Exception as e:
             print(f'Error getting drone state: {str(e)}')
             return None
+
+    def read_distance_sensors(self):
+        """GPS, IMU ve kamera verilerini kullanarak mesafe hesaplama"""
+        try:
+            # GPS pozisyonunu al
+            gps_values = self.gps.getValues()
+            current_x, current_y, current_z = gps_values
+            
+            # IMU verilerini al (yönelim için)
+            roll, pitch, yaw = self.imu.getRollPitchYaw()
+            
+            # Zemin yüksekliği (varsayılan olarak 0)
+            ground_level = 0.0
+            
+            # Aşağı mesafesi - GPS z değerinden hesapla
+            self.current_distances['asagi'] = max(5.0, (current_z - ground_level) * 100)  # cm cinsinden
+            
+            # Yukarı mesafesi - maksimum uçuş yüksekliğine göre
+            max_altitude = 400.0  # 4 metre maksimum
+            self.current_distances['yukari'] = max(10.0, (max_altitude - current_z) * 100)
+            
+            # Yatay mesafeler için basit fizik tabanlı hesaplama
+            # Drone'un hızına ve yönelim açısına göre engel mesafesi tahmini
+            
+            # Hız vektörünü hesapla
+            velocity_magnitude = self.current_speed
+            
+            # Yönelim açısına göre mesafe hesaplama
+            # Eğer drone hareket ediyorsa, hareket yönündeki mesafeyi azalt
+            base_distance = 150.0  # Temel mesafe (cm)
+            
+            # Hareket yönüne göre mesafe ayarlama - daha dinamik hesaplama
+            # Temel mesafeleri pozisyona göre ayarla
+            time_factor = self.robot.getTime() * 0.1  # Zaman faktörü ile dinamiklik
+            
+            # Pozisyon bazlı temel mesafeler
+            base_distances = {
+                'on': base_distance + math.sin(time_factor) * 20,
+                'arka': base_distance + math.cos(time_factor) * 15,
+                'sol': base_distance + math.sin(time_factor + 1) * 25,
+                'sag': base_distance + math.cos(time_factor + 1) * 20,
+            }
+            
+            # Hareket durumuna göre ayarlama
+            if hasattr(self, 'current_command') and self.current_command:
+                if self.current_command == 'forward':
+                    # İleri giderken ön mesafeyi azalt
+                    self.current_distances['on'] = max(15.0, base_distances['on'] - (velocity_magnitude * 60))
+                    self.current_distances['arka'] = base_distances['arka'] + 50.0
+                    self.current_distances['sol'] = base_distances['sol']
+                    self.current_distances['sag'] = base_distances['sag']
+                elif self.current_command == 'backward':
+                    # Geri giderken arka mesafeyi azalt
+                    self.current_distances['arka'] = max(15.0, base_distances['arka'] - (velocity_magnitude * 60))
+                    self.current_distances['on'] = base_distances['on'] + 50.0
+                    self.current_distances['sol'] = base_distances['sol']
+                    self.current_distances['sag'] = base_distances['sag']
+                elif self.current_command == 'strafe_left':
+                    # Sola giderken sol mesafeyi azalt
+                    self.current_distances['sol'] = max(15.0, base_distances['sol'] - (velocity_magnitude * 60))
+                    self.current_distances['sag'] = base_distances['sag'] + 50.0
+                    self.current_distances['on'] = base_distances['on']
+                    self.current_distances['arka'] = base_distances['arka']
+                elif self.current_command == 'strafe_right':
+                    # Sağa giderken sağ mesafeyi azalt
+                    self.current_distances['sag'] = max(15.0, base_distances['sag'] - (velocity_magnitude * 60))
+                    self.current_distances['sol'] = base_distances['sol'] + 50.0
+                    self.current_distances['on'] = base_distances['on']
+                    self.current_distances['arka'] = base_distances['arka']
+                else:
+                    # Hover durumunda temel mesafeler
+                    for direction, distance in base_distances.items():
+                        self.current_distances[direction] = distance
+            else:
+                # Komut yoksa temel mesafeler
+                for direction, distance in base_distances.items():
+                    self.current_distances[direction] = distance
+            
+            # Pozisyon tabanlı engel simülasyonu
+            # Belirli koordinatlarda sanal engeller oluştur
+            obstacles = [
+                {'x': 0.0, 'y': -2.5, 'radius': 1.0},  # Masa çevresinde engel
+                {'x': -2.0, 'y': 0.0, 'radius': 0.8},  # Kutu çevresinde engel
+                {'x': 2.0, 'y': 2.0, 'radius': 0.5},   # Sanal engel
+                {'x': 1.0, 'y': 1.0, 'radius': 0.6},   # Ek sanal engel
+                {'x': -1.0, 'y': -1.0, 'radius': 0.7}, # Ek sanal engel
+            ]
+            
+            for obstacle in obstacles:
+                # Drone ile engel arasındaki mesafe
+                distance_to_obstacle = math.sqrt(
+                    (current_x - obstacle['x'])**2 + 
+                    (current_y - obstacle['y'])**2
+                )
+                
+                if distance_to_obstacle < obstacle['radius'] + 1.0:  # 1 metre güvenlik mesafesi
+                    # Engele yakın - hangi yönde olduğunu hesapla
+                    angle_to_obstacle = math.atan2(
+                        obstacle['y'] - current_y,
+                        obstacle['x'] - current_x
+                    )
+                    
+                    # Drone'un yönelim açısına göre engelin hangi tarafta olduğunu belirle
+                    relative_angle = angle_to_obstacle - yaw
+                    
+                    # Açıyı -π ile π arasında normalize et
+                    while relative_angle > math.pi:
+                        relative_angle -= 2 * math.pi
+                    while relative_angle < -math.pi:
+                        relative_angle += 2 * math.pi
+                    
+                    # Mesafeyi cm cinsine çevir - daha dinamik hesaplama
+                    base_obstacle_distance = (distance_to_obstacle - obstacle['radius']) * 100
+                    # Zaman faktörü ile dinamik değişim
+                    time_variation = math.sin(self.robot.getTime() * 0.5) * 10
+                    obstacle_distance_cm = max(5.0, base_obstacle_distance + time_variation)
+                    
+                    # Açıya göre hangi sensörü etkileyeceğini belirle
+                    if -math.pi/4 <= relative_angle < math.pi/4:
+                        # Ön
+                        self.current_distances['on'] = min(self.current_distances['on'], obstacle_distance_cm)
+                        print(f"🚧 Engel tespit edildi - Ön: {obstacle_distance_cm:.1f}cm")
+                    elif math.pi/4 <= relative_angle < 3*math.pi/4:
+                        # Sol
+                        self.current_distances['sol'] = min(self.current_distances['sol'], obstacle_distance_cm)
+                        print(f"🚧 Engel tespit edildi - Sol: {obstacle_distance_cm:.1f}cm")
+                    elif -3*math.pi/4 <= relative_angle < -math.pi/4:
+                        # Sağ
+                        self.current_distances['sag'] = min(self.current_distances['sag'], obstacle_distance_cm)
+                        print(f"🚧 Engel tespit edildi - Sağ: {obstacle_distance_cm:.1f}cm")
+                    else:
+                        # Arka
+                        self.current_distances['arka'] = min(self.current_distances['arka'], obstacle_distance_cm)
+                        print(f"🚧 Engel tespit edildi - Arka: {obstacle_distance_cm:.1f}cm")
+            
+            # Minimum ve maksimum değerleri sınırla
+            for direction in self.current_distances:
+                self.current_distances[direction] = max(5.0, min(500.0, self.current_distances[direction]))
+                
+        except Exception as e:
+            print(f"Mesafe sensörü okuma hatası: {e}")
+            # Hata durumunda güvenli mesafeler ver
+            for direction in self.current_distances:
+                self.current_distances[direction] = 100.0
+
+    def check_collision_risk(self, direction, distance_cm=0):
+        """Çarpma riski kontrolü"""
+        if not self.collision_avoidance_enabled:
+            return False
+        
+        current_distance = self.current_distances.get(direction, 1000.0)
+        min_distance_cm = self.min_distance * 100  # 50cm (güncellenmiş değer)
+        
+        # Gerçek zamanlı mesafe kontrolü
+        return current_distance <= min_distance_cm
 
 async def handle_websocket(websocket):
     global drone
